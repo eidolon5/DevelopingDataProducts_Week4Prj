@@ -1,0 +1,452 @@
+---
+title: 'Game of War: Investigating Inclusion of Jokers on Winnings'
+author: "Samantha vacik"
+date: "2025-06-26"
+output: slidy_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+## Investigating a Hypothesis Rooted in Game Theory
+
+Game of War is a traditional card game with varied rule sets, including whether to include or exclude the joker cards from the deck.
+
+Standard decks have 52 cards of four suits and values ranging from 1 (Ace card) to 13 (King card) and the joker generally has a value of 14 in card games when included. If included in the Game of War, the joker gives players an advantage because it is the card that wins over all other cards, except another joker. 
+
+Hypothesis: There appears to be a linear relationship between the number of rounds a player wins and the total rounds per game, which increase the more wars occur. When jokers are included, the number of rounds would likely decrease. As a result, the R^2 value of a linear regression between the number of player rounds won and total rounds per game would increase and data points would cluster closer to a regression line when jokers are included in the deck.
+
+## Game of War: Background
+
+- Objective: A player wins the game by obtaining all cards through successive rounds.
+
+- Game Setup: Shuffle deck and deal cards evenly to two players. Each gets a total of 26 cards (excluding jokers) or 27 cards (including jokers).
+
+- Gameplay: Each round, the players play the top card of the deck face up and compare their values regardless of suit, color and face. The winner takes both cards and adds them to the bottom of their deck. If the cards were equal in value, the players would play a War round: each draws three cards and sets them face down, they draw fourth cards, and compare their values. This could result in going back to regularly drawing cards or it could resul in another round of war. 
+
+- Winning Scenarios:
+  A) Card 1 > Card 2: Player 1 wins and takes all cards.
+  B) Card 1 < Card 2: Player 2 wins round and takes all cards.
+  C) Card 1 = Card 2: War:
+     1) Player 1 wins by default if Player 2 has not enough cards.
+     2) Player 2 wins by default if Player 1 has not enough cards.
+
+```{r , echo = FALSE}
+print("Card Values")
+print(data.frame(face = c("Joker", "King", "Queen", "Jack", "Ten", "Nine", "Eight", "Seven", "Six", "Five", "Four", "Three", "Two", "Ace"), value = c(14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)))
+
+```
+
+## Game of War: Simulating Game Outcomes
+
+Code was developed in R to simulate the Game of War. Known limitations exist, such as a bug that can cause the program to stall and unknown potential of successive games of war. These will be fixed in future iterations of this code; however, the current iteration replicate game play and data consistent with games of war excluding and including jokers in the deck. :)
+
+Furthermore, the linear relationship between player rounds won and total rounds is evident in this dataset. In this simulation, the probability of including jokers is set to 0.5 and 200 runs were conducted.
+
+```{r , echo = FALSE}
+library(purrr); library(dplyr); library(infer); library(progress)
+
+# Function Declarations
+CreateDeck <- function(JokerSwitch, MetricSwitch){
+  # Generates a standard card deck with or without a joker based on user input.
+  # Deck will be a data frame with suit, face, and value in a (column by row)
+  # 4 x 52 data frame with column heads: face, suit, value, player
+  # Basic setup of a deck without Joker
+  suits <- c('spades', 'clubs', 'diamonds', 'hearts')
+  suit <- unlist(map(suits, rep, 13))
+  faces <- c('king', 'queen', 'jack', 'ten', 'nine', 'eight', 'seven', 'six', 'five', 'four', 'three', 'two', 'ace')
+  face <- rep(faces, 4)
+  value <- rep(13:1, 4)
+  player <- rep(0, 52) # indicates which card belongs to which player deck when combined
+  
+  if(MetricSwitch == 1){
+    warz <- rep(0, 52) # war counter
+    p1roundswon <- rep(0, 52) # couter for rounds won by Player 1
+    p2roundswon <- rep(0, 52) # counter for rounds won by Player 2
+    p1warswon <- rep(0, 52) # counter for wars won by Player 1
+    p2warswon <- rep(0, 52) # counter for wars won by Player 2
+    deck <- data.frame(face, suit, value, player, warz, p1roundswon, p2roundswon, p1warswon, p2warswon)
+  } else {
+    deck <- data.frame(face, suit, value, player)
+  }
+  # if Joker is included, Joker = 1
+  if(JokerSwitch == 1){
+    face <- c('joker', 'joker')
+    suit <- c('none', 'none')
+    value <- rep(14, 2)
+    player <- c(0,0)
+    warz <- c(0,0)
+    p1roundswon <- warz; p2roundswon <- warz
+    p1warswon <- warz; p2warswon <- warz
+    if( MetricSwitch == 1){
+      deck2 <- data.frame(face, suit, value, player, warz, p1roundswon, p2roundswon, p1warswon, p2warswon)
+    } else {
+      deck2 <- data.frame(face, suit, value, player)
+    }
+    
+    deck <- rbind(deck, deck2)
+  } 
+  
+  return(deck)
+}
+
+Shuffle <- function(ndeck){
+  # Shuffle the deck via random resampling N times.
+  return(sample_n(ndeck, dim(ndeck)[1], replace=F))
+}
+
+MultiShuffle <- function(ndeck, N){
+  Tdeck <- ndeck
+  for(i in 1:N){
+    Tdeck <- Shuffle(Tdeck)
+  }
+  return(Tdeck)
+}
+
+Determine <- function(card1, card2){ 
+  # Determines relationship between cards and returns an indicator if Scenarios 
+  # A, B, or C occurred.
+  if( card1[1,3] > card2[1,3] ){
+    # player 1 wins round
+    return(1)
+  } else if( card1[1,3] < card2[1,3] ){
+    # player 2 wins round
+    return(2)
+  } else if( card1[1,3] == card2[1,3] ){
+    # it's a war
+    return(3)
+  }
+}
+
+Deal <- function(Ndeck){
+  # Deals the cards evenly into two decks.
+  odds <- seq_len(nrow(Ndeck)) %% 2
+  Tdeck1 <- Ndeck[odds == 1,]; Tdeck1$player <- 1 # deal to player 1
+  Tdeck2 <- Ndeck[odds == 0,]; Tdeck2$player <- 2 # deal to player 2
+  return( rbind(Tdeck1, Tdeck2) )
+}
+
+Draw <- function(Nduck, r){
+  # Draws and returns a specified number of cards while deleting from input deck.
+  #card <- Nduck[r,] # draws card from the deck at position r
+  return( Nduck[r,])
+}
+
+PlayGame3 <- function(Game, GameData, Joker, Metric){
+  # Setup Decks & Deal
+  Deck <- CreateDeck(Joker,Metric); Deck <- MultiShuffle(Deck, 2); Deck <- Deal(Deck)
+  D1 <- Deck[Deck$player == 1,]; D2 <- Deck[Deck$player == 2,]
+  r <- 1
+  Winner <- -1
+  
+  # Initial Joker counting.
+  GameData[Game, 6] <- sum(D1$face == 'joker', na.rm = TRUE) # Increase P1 jokers
+  GameData[Game, 7] <- sum(D2$face == 'joker', na.rm = TRUE) # Increase P2 jokers
+  
+  # while or first for loop would start here
+  while(Winner != 1 | Winner != 2){
+    if(is.null(D1) == TRUE){
+      Winner <- 2
+      break
+    }
+    if(is.null(D2) == TRUE){
+      Winner <- 1
+      break
+    }
+    
+    # Determine everywhere D1 > D2, D1 < D2, and D1 = D2.
+    D1greaterD2 <- as.numeric(D1$value > D2$value)
+    D1lesserD2 <- as.numeric(D1$value < D2$value)
+    D1equalsD2 <- as.numeric(D1$value == D2$value)
+    #Comparison <- data.frame(P1equalsP2 = as.numeric(D1$value == D2$values), P1greaterP2 = as.numeric(D1$value > D2$vaue), P1lesserP2 = as.numeric(D1$value < D2$value))
+    
+    # Scenarios:
+    # A)   D1 > D2: D1 wins. -> D1 takes both cards.
+    # B).  D1 < D2: D2 wins. -> D2 takes both cards.
+    # C).  D1 = D2: War.     -> Next six cards (3 from D1 and 3 from D2) are up for graps. 
+    #.                       -> Next two cards (1 from D1 and 1 from D2) are drawn to repeat comparison.
+    #                       -> It repeats until Scenario A or B occurs.
+    
+    # Estimate where P1 wins and P2 loses:
+    # for loop to create a sequence of indices for the next for loop sorting through 
+    # cards to drive scenarios. Initiate Bag of Holding to hold indices
+    WarIDs <- which(D1$value == D2$value) # gives indices where War will occur
+    Bag0Holding <- data.frame(A = as.numeric(D1greaterD2), B = as.numeric(D1lesserD2), War = as.numeric(D1equalsD2))
+    Bag0Holding0 <- Bag0Holding
+    # Designate cards to be pulled for War
+    if(length(WarIDs) >= 1){
+      WarSeq <- c(-1,-1,-1)
+      for(i in 1:length(WarIDs)){
+        
+        if(WarIDs[i] %in% WarSeq){
+          next
+        } else {
+          Bag0Holding[WarIDs[i]:WarIDs[i]+3,3] <- 1 # Set cards for War to 1
+          Bag0Holding[WarIDs[i]:WarIDs[i]+3,1:2] <- 0 # Set cards for A, B to 0
+          #Bag0Holding[WarIDs[i]:WarIDs[i]+3,4:5] <- 0 # Set cards for D1, D2 to 0
+          WarSeq <- c(WarIDs[i]:WarIDs[i] + 3)
+        }
+      }
+    } 
+    
+    
+    # Conduct the game.
+    for(i in 1:dim(Bag0Holding)[1]){
+      #GameData[Game, 12] <- GameData[Game, 12] + 1 # Update Total Rounds
+      GameData[Game, 6] <- GameData[Game, 6] + sum(D1$face == 'joker', na.rm = TRUE) # Increase P1 jokers
+      GameData[Game, 7] <- GameData[Game, 7] + sum(D2$face == 'joker', na.rm = TRUE) # Increase P2 jokers
+      
+      if(is.na(any(Bag0Holding[i,])) == TRUE){
+        next
+      }
+      #print(paste("Round ",i))
+      Cards <- rbind(D1[1,], D2[1,]) # Extract cards to be dealt
+      #print(dim(D1)); print(dim(D2))
+      #print(Bag0Holding[i,])
+      if(dim(D1)[1] < 1 | dim(D2)[1] < 4 | is.null(D1) == TRUE | is.null(D2) == TRUE){ # Check for Scenarios D1 & D2
+        # This ends the game. 
+        if(dim(D2)[1] < 1 | is.null(D2) == TRUE){
+          # Scenario A: P1 wins and takes cards because P2 didn't have enough cards.
+          D1 <- rbind(D1, Cards, D2); D2 <- NULL; Cards <- NULL
+          Winner <- 1
+          D1$player <- 1
+          GameData[Game, 4] <- GameData[Game,4] + 1 # Increase P1 wins by 1
+          GameData[Game, 8] <- GameData[Game, 8] + 1 # Increase P1 rounds won by 1
+          GameData[Game, 6] <- GameData[Game, 6] + sum(D1$face == 'joker', na.rm = TRUE) # Increase P1 jokers 
+          break
+        }  else if(dim(D1)[1] < 1 | is.null(D1) == TRUE){
+          # Scenario B: P2 wins and takes cards because P1 didn't have enough cards.
+          D2 <- rbind(D2, Cards, D1); D1 <- NULL; Cards <- NULL
+          D2$player <- 2
+          Winner <- 2
+          GameData[Game, 5] <- GameData[Game, 5] + 1 # Increase P2 wins by 1
+          GameData[Game, 9] <- GameData[Game, 9] + 1 # Increase P2 rounds won by 1
+          GameData[Game, 7] <- GameData[Game, 7] + sum(D2$face == 'joker', na.rm = TRUE) # Increase P2 jokers
+          break
+        }
+      } else if(Bag0Holding[i,1] == 1){
+        #print("P1 won this round.")
+        
+        # Scenario A: P1 wins and takes cards for this round.
+        D1 <- rbind(D1, Cards); D1 <- D1[-1,]; D2 <- D2[-1,]
+        D1$player <- 1
+        #GameData[Game, 4] <- GameData[Game,4] + 1 # Increase P1 wins by 1
+        GameData[Game, 8] <- GameData[Game, 8] + 1 # Increase P1 rounds won by 1
+        #GameData[Game, 6] <- GameData[Game, 6] + sum(D1$face == 'joker') # Increase P1 jokers 
+        #GameData[Game, 7] <- GameData[Game, 7] + sum(D2$face == 'joker') # Increase P2 jokers
+      } else if(Bag0Holding[i,2] == 1){
+        #print("P2 won this round.")
+        # Scenario B: P2 wins and takes cards for this round.
+        D2 <- rbind(D2, Cards); D1 <- D1[-1,]; D2 <- D2[-1,]
+        D2$player <- 2
+        #GameData[Game, 5] <- GameData[Game, 5] + 1 # Increase P2 wins by 1
+        GameData[Game, 9] <- GameData[Game, 9] + 1 # Increase P2 rounds won by 1
+        #GameData[Game, 7] <- GameData[Game, 7] + sum(D2$face == 'joker') # Increase P2 jokers
+        #GameData[Game, 6] <- GameData[Game, 6] + sum(D1$face == 'joker')
+      } else if(Bag0Holding[i,3] == 1){
+        #print("P1 & P2 went to War.")
+        # Scenario C: War. 
+        #War <- -1
+        #GameData[Game, 2] <- GameData[Game, 2] + 1 # Increase War Counter by 1
+        #Cards <- rbind(D1[1:4,], D2[1:4,]) # Redo card extraction from D1 & D2.
+        if(dim(D2)[1] < 4 | is.null(D2) == TRUE){
+          # Scenario A: P1 wins and takes cards because P2 didn't have enough cards.
+          D1 <- rbind(D1, Cards, D2); D2 <- NULL; Cards <- NULL
+          Winner <- 1
+          D1$player <- 1
+          GameData[Game, 4] <- GameData[Game,4] + 1 # Increase P1 wins by 1
+          GameData[Game, 8] <- GameData[Game, 8] + 1 # Increase P1 rounds won by 1
+          GameData[Game, 6] <- GameData[Game, 6] + sum(D1$face == 'joker', na.rm = TRUE) # Increase P1 jokers 
+          break
+        }  else if(dim(D1)[1] < 4 | is.null(D1) == TRUE){
+          # Scenario B: P2 wins and takes cards because P1 didn't have enough cards.
+          D2 <- rbind(D2, Cards, D1); D1 <- NULL; Cards <- NULL
+          D2$player <- 2
+          Winner <- 2
+          GameData[Game, 5] <- GameData[Game, 5] + 1 # Increase P2 wins by 1
+          GameData[Game, 9] <- GameData[Game, 9] + 1 # Increase P2 rounds won by 1
+          GameData[Game, 7] <- GameData[Game, 7] + sum(D2$face == 'joker', na.rm = TRUE) # Increase P2 jokers
+          break
+        }
+        Cards <- rbind(D1[1:4,], D2[1:4,]) # Redo card extraction from D1 & D2.
+        War <- -1
+        GameData[Game, 2] <- GameData[Game, 2] + 1 # Increase War Counter by 1
+        if(Cards[4,3] > Cards[8,3]){
+          #print("P1 won the War.")
+          # Scenario A: P1 wins and takes cards.
+          D1 <- rbind(D1, Cards); D1 <- D1[-c(1:4),]; D2 <- D2[-c(1:4),]
+          D1$player <- 1
+          #GameData[Game, 4] <- GameData[Game,4] + 1 # Increase P1 wins by 1
+          GameData[Game, 8] <- GameData[Game, 8] + 1 # Increase P1 rounds won by 1
+          #GameData[Game, 6] <- GameData[Game, 6] + sum(D1$face == 'joker') # Increase P1 jokers
+          GameData[Game, 10] <- GameData[Game, 10] + 1
+        } else if(Cards[4,3] < Cards[8,3]){
+          #print("P2 won the War.")
+          #Scenario B: P2 wins and takes cards.
+          D2 <- rbind(D2, Cards); D2 <- D2[-c(1:4),]; D1 <- D1[-c(1:4),]
+          D2$player <- 2
+          #GameData[Game, 5] <- GameData[Game, 5] + 1 # Increase P2 wins by 1
+          GameData[Game, 9] <- GameData[Game, 9] + 1 # Increase P2 rounds won by 1
+          #GameData[Game, 7] <- GameData[Game, 7] + sum(D2$face == 'joker') # Increase P2 jokers
+          GameData[Game, 11] <- GameData[Game, 11] + 1
+        } else {
+          # In case of a second war! 
+          
+        }
+      } else {#if(as.numeric(any(Bag0Holding[i,])) == 0 | as.numeric(is.na(any(Bag0Holding[i,]))) == 0) {
+        next
+      }
+      
+    }
+    
+    if(is.null(D1) == TRUE){
+      Winner <- 2
+      break
+    }
+    if(is.null(D2) == TRUE){
+      Winner <- 1
+      break
+    }
+    
+    # Update round counter
+    r <- r + 1
+    #print(dim(D1)); print(dim(D2))
+    if(dim(D1)[1] < 4 | dim(D2)[1] < 4 | is.null(D1) == TRUE | is.null(D2) == TRUE){
+      if(dim(D2)[1] < 4 | is.null(D2) == TRUE ){
+        # Scenario A: P1 wins and takes cards because P2 didn't have enough cards.
+        D1 <- rbind(D1, Cards, D2); D2 <- NULL; Cards <- NULL
+        Winner <- 1
+        D1$player <- 1
+        GameData[Game, 4] <- GameData[Game,4] + 1 # Increase P1 wins by 1
+        GameData[Game, 8] <- GameData[Game, 8] + 1 # Increase P1 rounds won by 1
+        GameData[Game, 6] <- GameData[Game, 6] + sum(D1$face == 'joker', na.rm = TRUE) # Increase P1 jokers 
+        break
+      }  else if(dim(D1)[1] < 4 | is.null(D1) == TRUE){
+        # Scenario B: P2 wins and takes cards because P1 didn't have enough cards.
+        D2 <- rbind(D2, Cards, D1); D1 <- NULL; Cards <- NULL
+        D2$player <- 2
+        Winner <- 2
+        GameData[Game, 5] <- GameData[Game, 5] + 1 # Increase P2 wins by 1
+        GameData[Game, 9] <- GameData[Game, 9] + 1 # Increase P2 rounds won by 1
+        GameData[Game, 7] <- GameData[Game, 7] + sum(D2$face == 'joker', na.rm = TRUE) # Increase P2 jokers
+        break
+      }
+    }
+    
+    if(is.null(D1) == TRUE){
+      Winner <- 2
+      break
+    }
+    if(is.null(D2) == TRUE){
+      Winner <- 1
+      break
+    }
+    
+  }
+  GameData[Game,12] <- GameData[Game,8] + GameData[Game,9]
+  return(GameData)
+}
+
+SimulateWar2 <- function(TotalGames, JokerProbability, MetricCheck){
+  # Initiate variables
+  if(MetricCheck == 1){
+    GameData <- data.frame(Game = seq(1:TotalGames), WarCount = 0, JokersOrNot = 0, P1Wins = 0, P2Wins = 0, P1Jokers = 0, P2Jokers = 0, P1RoundsWon = 0, P2RoundsWon = 0, P1WarsWon = 0, P2WarsWon = 0, TotalRounds = 0)
+    JokerGames <- sample(c(0,1), size=TotalGames, replace = TRUE, prob = c(1 - JokerProbability, JokerProbability))
+  } else {
+    GameData <- data.frame(Game = seq(1:TotalGames), WarCount = 0, JokersOrNot = 0 ,P1Wins = 0, P1Jokers = 0, P2Wins = 0, P2Jokers = 0)
+    JokerGames <- sample(c(0,1), size=TotalGames, replace = TRUE, prob = c(1 - JokerProbability, JokerProbability))
+  }  
+  
+  GameData$JokersOrNot <- JokerGames
+  
+  pb <- txtProgressBar(min = 0, max = TotalGames, style = 3, width = 50, char = "=")
+  
+  for(n in 1:TotalGames){
+    #print("Game"); print(n)
+    GameData <- PlayGame3(n, GameData, JokerGames[n], MetricCheck)
+    #print(GameData[n,])
+    # Sets the progress bar to the current state
+    setTxtProgressBar(pb,n)
+  }
+  close(pb)
+  return(GameData) 
+}
+
+# Main Program
+Option <- 1
+   
+if(Option == 1){
+    GameCube <- SimulateWar2(200, 0.5, 1)
+} else {
+  Games <- c(50, 50, 50, 50, 50)
+  Probabilities <- c(0.1, 0.3, 0.5, 0.7, 0.9)
+    
+  for(i in 1:length(Games)){
+    if(i == 1){
+      GameCube <- SimulateWar2(Games[i], Probabilities[i], 1)
+    } else {
+      GameDatum <- SimulateWar2(Games[i], Probabilities[i], 1)
+      GameCube <- rbind(GameCube, GameDatum)
+    }
+  }
+    
+  for(i in 1:sum(Games)){
+    if(i == 1){
+      PJoker <- data.frame(Pjoker = Probabilities[1])
+    } else if(i > 1 & i <= Games[1]){
+      PJoker <- rbind(PJoker, Probabilities[1])
+    } else if(i > Games[1] & i <= Games[1] * 2){
+      PJoker <- rbind(PJoker, Probabilities[2])
+    } else if(i > Games[1] * 2 & i <= Games[1] * 3){
+      PJoker <- rbind(PJoker, Probabilities[3])
+    } else if( i > Games[1] * 3 & i <= Games[1] * 4){
+      PJoker <- rbind(PJoker, Probabilities[4])
+    } else if ( i > Games[1] * 4 & i <= Games[1] * 5){
+      PJoker <- rbind(PJoker, Probabilities[5])
+    }
+  }
+    
+  GameCube <- cbind(GameCube, PJoker)
+}
+
+WoJokers <- GameCube[GameCube$JokersOrNot == 1,]
+WJokers <- GameCube[GameCube$JokersOrNot == 0,]
+
+```
+```{r, echo = TRUE}
+summary(GameCube)
+```
+## Enhanced Scatterplot: P1 Rounds Won by Total Rounds per Game
+
+As can be seen in this plot, the linear relationship is demonstrated between player wins and the number of rounds per game. When the jokers are included, the data points (blue) are closer to their linear regression line (blue) and there are fewer data points (blue) towards the maximum of the range of rounds, compared to when jokers are excluded (orange data points and regression line).
+
+The app generates this same type of graph and allows the user to play around with probability (0.0 to 1.0 with a default setting of 0.5) of including/excluding the joker and the total number of runs per game (up to 150 total for a server-deployed app due to the unidentified bug affecting runtime). This allows the user to explore the simulation for themselves and see what results arise. 
+
+```{r }
+reg.fitA <- lm(P1RoundsWon ~ TotalRounds, data = WoJokers)
+text_Ax <- min(WoJokers$TotalRounds) + (max(WoJokers$TotalRounds) - min(WoJokers$TotalRounds)) * 0.05
+text_Ay <- max(WoJokers$P1RoundsWon) - (max(WoJokers$P1RoundsWon) - min(WoJokers$P1RoundsWon)) * 0.15
+
+reg.fitB <- lm(P1RoundsWon ~ TotalRounds, data = WJokers)
+text_Bx <- min(WJokers$TotalRounds) + (max(WJokers$TotalRounds) - min(WJokers$TotalRounds)) * 0.05
+text_By <- max(WJokers$P1RoundsWon) - (max(WJokers$P1RoundsWon) - min(WJokers$P1RoundsWon)) * 0.15
+
+
+par(mfrow=c(2,2), fig=c(0.0, 0.8, 0.0, 0.8), new = TRUE)
+      plot(WoJokers$TotalRounds, WoJokers$P1RoundsWon, xlab = "Total Rounds per Game", ylab = "# Rounds P1 Won per Game", col = "orange", pch = 19, lwd = 3, cex=1.5)
+      abline(reg.fitA, col="orange", lwd = 3)
+      text(text_Ax, text_Ay, labels = paste("Equation: y = ", round(coef(reg.fitA)[2], 2), "x + ", round(coef(reg.fitA)[1],2), "\nR-squared = ", round(summary(reg.fitA)$r.squared, 2)), pos = 4)
+      points(WJokers$TotalRounds, WJokers$P1RoundsWon, col="blue", pch = 5, cex = 1.5)
+      abline(reg.fitB, col="blue", lwd=2)
+      par(fig=c(0, 0.8, 0.55, 1), new=TRUE)
+      boxplot(WoJokers$TotalRounds, col="NA", border ="orange", horizontal = TRUE, axes = FALSE, lwd = 3)
+      boxplot(WJokers$TotalRounds, col = "NA", border ="blue", horizontal = TRUE, axes = FALSE, add = TRUE, yaxt = "n", lwd = 2)
+      par(fig = c(0.65, 1, 0, 0.8), new = TRUE)
+      boxplot(WoJokers$P1RoundsWon, col="NA", border = "orange", axes = FALSE, lwd = 3)
+      boxplot(WJokers$P1RoundsWon, col = "NA", border = "blue", axes = FALSE, add = TRUE, yaxt = "n", lwd = 2)
+      mtext("Player 1 Rounds Won versus Total Rounds per Game: Games w/o Jokers (orange) & Games w/ Jokers (blue)", side = 3, outer=TRUE, line = -3, cex=1.5)
+      legend("topright", legend = c("Exclude Jokers", "Include Jokers"), col=c("orange", "blue"), pch=c(1, 5))
+      
+```
+
